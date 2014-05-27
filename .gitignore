@@ -1,0 +1,45 @@
+
+# compiled stuff
+compute-accuracy
+distance
+word-analogy
+word2phrase
+word2vec
+
+# data
+text8
+text8.gz
+text8-phrase
+
+#svn
+.svn/
+
+# binaries
+*.bin
+
+# swaps
+*.swp
+
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Libraries
+*.lib
+*.a
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
