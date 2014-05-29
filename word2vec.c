@@ -29,11 +29,15 @@ const int vocab_hash_size = 30000000;  // Maximum 30 * 0.7 = 21M words in the vo
 typedef float real;                    // Precision of float numbers
 
 struct vocab_word {
+  //freq count
   long long cn;
+  //pointer to the huffman tree node used to store this word
   int *point;
+  // pointer to the word,  huffman binary code, and the literal length of the code.
   char *word, *code, codelen;
 };
 
+// default options and initializations
 char train_file[MAX_STRING], output_file[MAX_STRING];
 char save_vocab_file[MAX_STRING], read_vocab_file[MAX_STRING];
 struct vocab_word *vocab;
@@ -130,18 +134,19 @@ int AddWordToVocab(char *word) {
     vocab_max_size += 1000;
     vocab = (struct vocab_word *)realloc(vocab, vocab_max_size * sizeof(struct vocab_word));
   }
+  // hash and handle any hash collisions
   hash = GetWordHash(word);
   while (vocab_hash[hash] != -1) hash = (hash + 1) % vocab_hash_size;
   vocab_hash[hash] = vocab_size - 1;
   return vocab_size - 1;
 }
 
-// Used later for sorting by word counts
+// Used later for sorting by word counts - difference of two word freq counts
 int VocabCompare(const void *a, const void *b) {
     return ((struct vocab_word *)b)->cn - ((struct vocab_word *)a)->cn;
 }
 
-// Sorts the vocabulary by frequency using word counts
+// Sorts the vocabulary by frequency using word counts and re-hash
 void SortVocab() {
   int a, size;
   unsigned int hash;
@@ -173,8 +178,11 @@ void SortVocab() {
 
 // Reduces the vocabulary by removing infrequent tokens
 void ReduceVocab() {
+  // a is a counter for elements currently in the array
+  // b is a counter for elements that satisfy the count > min_reduce requirement
   int a, b = 0;
   unsigned int hash;
+  
   for (a = 0; a < vocab_size; a++) if (vocab[a].cn > min_reduce) {
     vocab[b].cn = vocab[a].cn;
     vocab[b].word = vocab[a].word;
@@ -336,21 +344,30 @@ void ReadVocab() {
 }
 
 void InitNet() {
+  // allocates memory for word vectors into syn0
+  // also allocates memory for the cost function word vectors
+  // also randomly initializes word vectors.
   long long a, b;
+  //  allocates memory for the word vectors into syn0--- one real parameter per each word * layer 1 node.
   a = posix_memalign((void **)&syn0, 128, (long long)vocab_size * layer1_size * sizeof(real));
   if (syn0 == NULL) {printf("Memory allocation failed\n"); exit(1);}
+  // if hierarchical softmax is used, 
   if (hs) {
+    //allocates memory for the net into syn1---one real param per each word*node
     a = posix_memalign((void **)&syn1, 128, (long long)vocab_size * layer1_size * sizeof(real));
     if (syn1 == NULL) {printf("Memory allocation failed\n"); exit(1);}
     for (b = 0; b < layer1_size; b++) for (a = 0; a < vocab_size; a++)
      syn1[a * layer1_size + b] = 0;
   }
+  // if negative example sampling training is used (faster than hs), 
   if (negative>0) {
+    //allocates memory for the net into syn1neg, one real param per wordnode
     a = posix_memalign((void **)&syn1neg, 128, (long long)vocab_size * layer1_size * sizeof(real));
     if (syn1neg == NULL) {printf("Memory allocation failed\n"); exit(1);}
     for (b = 0; b < layer1_size; b++) for (a = 0; a < vocab_size; a++)
      syn1neg[a * layer1_size + b] = 0;
   }
+  // randomly initialize syn0 word vectors
   for (b = 0; b < layer1_size; b++) for (a = 0; a < vocab_size; a++)
    syn0[a * layer1_size + b] = (rand() / (real)RAND_MAX - 0.5) / layer1_size;
   CreateBinaryTree();
@@ -531,6 +548,7 @@ void TrainModel() {
   pthread_t *pt = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
   printf("Starting training using file %s\n", train_file);
   starting_alpha = alpha;
+  // create the vocab dictionary FIRST - whether its an existing file OR the training corpus.
   if (read_vocab_file[0] != 0) ReadVocab(); else LearnVocabFromTrainFile();
   if (save_vocab_file[0] != 0) SaveVocab();
   if (output_file[0] == 0) return;
@@ -670,6 +688,7 @@ int main(int argc, char **argv) {
   if ((i = ArgPos((char *)"-threads", argc, argv)) > 0) num_threads = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-min-count", argc, argv)) > 0) min_count = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-classes", argc, argv)) > 0) classes = atoi(argv[i + 1]);
+  // pointer to array of structs of all vocab words
   vocab = (struct vocab_word *)calloc(vocab_max_size, sizeof(struct vocab_word));
   vocab_hash = (int *)calloc(vocab_hash_size, sizeof(int));
   expTable = (real *)malloc((EXP_TABLE_SIZE + 1) * sizeof(real));
