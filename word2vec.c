@@ -172,6 +172,7 @@ void SortVocab() {
   // Allocate memory for the binary tree construction
   for (a = 0; a < vocab_size; a++) {
     vocab[a].code = (char *)calloc(MAX_CODE_LENGTH, sizeof(char));
+    // think this is huffman freq at node
     vocab[a].point = (int *)calloc(MAX_CODE_LENGTH, sizeof(int));
   }
 }
@@ -359,7 +360,7 @@ void InitNet() {
     for (b = 0; b < layer1_size; b++) for (a = 0; a < vocab_size; a++)
      syn1[a * layer1_size + b] = 0;
   }
-  // if negative example sampling training is used (faster than hs), 
+  // if negative  sampling training is used (faster than hs), 
   if (negative>0) {
     //allocates memory for the net into syn1neg, one real param per wordnode
     a = posix_memalign((void **)&syn1neg, 128, (long long)vocab_size * layer1_size * sizeof(real));
@@ -383,8 +384,11 @@ void *TrainModelThread(void *id) {
   real *neu1 = (real *)calloc(layer1_size, sizeof(real));
   real *neu1e = (real *)calloc(layer1_size, sizeof(real));
   FILE *fi = fopen(train_file, "rb");
+  // shard by file position
   fseek(fi, file_size / (long long)num_threads * (long long)id, SEEK_SET);
+  // BEGIN TRAINING LOOP
   while (1) {
+    // Batch progress, learn rate adjustment every 10k words
     if (word_count - last_word_count > 10000) {
       word_count_actual += word_count - last_word_count;
       last_word_count = word_count;
@@ -395,10 +399,13 @@ void *TrainModelThread(void *id) {
          word_count_actual / ((real)(now - start + 1) / (real)CLOCKS_PER_SEC * 1000));
         fflush(stdout);
       }
+      // adjust the learn rate linearly downwards as file is read through in every batch of 10k words, but not below 10 bps
       alpha = starting_alpha * (1 - word_count_actual / (real)(train_words + 1));
       if (alpha < starting_alpha * 0.0001) alpha = starting_alpha * 0.0001;
     }
     if (sentence_length == 0) {
+      // fill in sen with the word vocab indices from the current sentence 
+      // note, this software doesn't do sentence end detection, so it just runs to max_sentence_length.
       while (1) {
         word = ReadWordIndex(fi);
         if (feof(fi)) break;
@@ -421,18 +428,23 @@ void *TrainModelThread(void *id) {
     if (word_count > train_words / num_threads) break;
     word = sen[sentence_position];
     if (word == -1) continue;
+    // initialize neu1 and neu1e to 0
     for (c = 0; c < layer1_size; c++) neu1[c] = 0;
     for (c = 0; c < layer1_size; c++) neu1e[c] = 0;
+    // randomly sample the next word position inside the WINDOW (max skip length between words)
     next_random = next_random * (unsigned long long)25214903917 + 11;
     b = next_random % window;
     if (cbow) {  //train the cbow architecture
       // in -> hidden
       for (a = b; a < window * 2 + 1 - b; a++) if (a != window) {
+        // c is set to be the position relative to the current position of the next word
         c = sentence_position - window + a;
         if (c < 0) continue;
         if (c >= sentence_length) continue;
+        // last_word is set to be the next word
         last_word = sen[c];
         if (last_word == -1) continue;
+        // neu1c is set to be the word vector from last_word
         for (c = 0; c < layer1_size; c++) neu1[c] += syn0[c + last_word * layer1_size];
       }
       if (hs) for (d = 0; d < vocab[word].codelen; d++) {
@@ -553,10 +565,15 @@ void TrainModel() {
   if (save_vocab_file[0] != 0) SaveVocab();
   if (output_file[0] == 0) return;
   InitNet();
+  // if you are doing negative sampling initialize the ungram table
   if (negative > 0) InitUnigramTable();
+  // start the model training threads and run 'em
   start = clock();
   for (a = 0; a < num_threads; a++) pthread_create(&pt[a], NULL, TrainModelThread, (void *)a);
   for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
+
+  // training is done, now start outputting useful stuff / saving data etc.
+
   fo = fopen(output_file, "wb");
   if (classes == 0) {
     // Save the word vectors
